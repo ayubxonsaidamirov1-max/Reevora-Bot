@@ -43,4 +43,4 @@ async def find_movie(message: Message):
     else:
         await message.answer("❌ Bunday kod topilmadi. /katalog yuboring.")
 
-await dp.start_polling(bot)
+asyncio.run(dp.start_polling(bot))
