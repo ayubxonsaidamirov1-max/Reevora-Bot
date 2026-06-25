@@ -57,7 +57,7 @@ async def katalog(message: Message):
         return
     text = "📚 Mavjud kinolar:\n\n"
     for kod in movies:
-        text += f"🔑 Kod: {kod}\n"
+        text += f"🎬 Kino: {info['nomi']}\n🔑 Kod: {kod}\n\n"
     await message.answer(text)
 
 @dp.message()
