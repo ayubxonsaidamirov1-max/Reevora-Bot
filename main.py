@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 
-TOKEN = "TOKENINGIZNI_SHU_YERGA_QOYING"
+TOKEN = "8786835988:AAEFXWRGRsaSoVy4uldfW277O0ib93m6iF8"
 CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
 
