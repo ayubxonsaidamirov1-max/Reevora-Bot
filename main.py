@@ -1,4 +1,4 @@
-!pip install aiogram -q
+
 
 import asyncio
 from aiogram import Bot, Dispatcher
