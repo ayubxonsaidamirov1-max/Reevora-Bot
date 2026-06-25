@@ -218,7 +218,7 @@ async def stats(message: Message):
         f"👥 Foydalanuvchilar: {len(users)}\n"
         f"🎬 Kinolar soni: {len(movies)}\n"
         f"📢 Majburiy obunalar: {len(required_channels)}\n\n"
-        f"🔥 <b>Top kinolar:</b>\n{top_text if top_text else 'Hali yo\\'q'}",
+        f"🔥 <b>Top kinolar:</b>\n{top_text if top_text else 'Hali yoq'}",
         parse_mode="HTML"
     )
 
