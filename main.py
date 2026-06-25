@@ -1,19 +1,48 @@
 import asyncio
+import json
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiohttp import web
 
-TOKEN = "8786835988:AAEFXWRGRsaSoVy4uldfW277O0ib93m6iF8"
+TOKEN = "TOKENINGIZNI_SHU_YERGA_QOYING"
 CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-movies = {}
 users = set()
 required_channels = []
+
+MOVIES_FILE = "movies.json"
+USERS_FILE = "users.json"
+
+# ===================== FAYL SAQLASH =====================
+
+def load_movies():
+    if os.path.exists(MOVIES_FILE):
+        with open(MOVIES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+def save_movies():
+    with open(MOVIES_FILE, "w", encoding="utf-8") as f:
+        json.dump(movies, f, ensure_ascii=False)
+
+def load_users():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
+
+def save_users():
+    with open(USERS_FILE, "w") as f:
+        json.dump(list(users), f)
+
+movies = load_movies()
+users = load_users()
 
 # ===================== HTTP SERVER =====================
 
@@ -55,9 +84,13 @@ async def subscription_keyboard():
 @dp.message(Command("start"))
 async def start(message: Message):
     users.add(message.from_user.id)
+    save_users()
     if not await check_subscription(message.from_user.id):
         keyboard = await subscription_keyboard()
-        await message.answer("⚠️ <b>Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:</b>", reply_markup=keyboard, parse_mode="HTML")
+        await message.answer(
+            "⚠️ <b>Botdan foydalanish uchun quyidagi kanallarga obuna bo'ling:</b>",
+            reply_markup=keyboard, parse_mode="HTML"
+        )
         return
     await message.answer(
         "🎬 <b>Reevora Cinema Bot</b>ga xush kelibsiz!\n\n"
@@ -72,15 +105,24 @@ async def start(message: Message):
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery):
     if await check_subscription(callback.from_user.id):
-        await callback.message.edit_text("✅ <b>Rahmat! Endi botdan foydalanishingiz mumkin!</b>\n\n🎬 Kino kodini yuboring yoki /katalog ga kiring.", parse_mode="HTML")
+        await callback.message.edit_text(
+            "✅ <b>Rahmat! Endi botdan foydalanishingiz mumkin!</b>\n\n"
+            "🎬 Kino kodini yuboring yoki /katalog ga kiring.",
+            parse_mode="HTML"
+        )
     else:
         keyboard = await subscription_keyboard()
-        await callback.message.edit_text("⚠️ <b>Siz hali ham barcha kanallarga obuna bo'lmagansiz!</b>\n\nIltimos, barcha kanallarga obuna bo'ling:", reply_markup=keyboard, parse_mode="HTML")
+        await callback.message.edit_text(
+            "⚠️ <b>Siz hali ham barcha kanallarga obuna bo'lmagansiz!</b>\n\n"
+            "Iltimos, barcha kanallarga obuna bo'ling:",
+            reply_markup=keyboard, parse_mode="HTML"
+        )
     await callback.answer()
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     users.add(message.from_user.id)
+    save_users()
     await message.answer(
         "📖 <b>Yordam</b>\n\n"
         "▫️ Kino <b>kodini</b> yuboring → film keladi\n"
@@ -93,6 +135,7 @@ async def help_cmd(message: Message):
 @dp.message(Command("katalog"))
 async def katalog(message: Message):
     users.add(message.from_user.id)
+    save_users()
     if not await check_subscription(message.from_user.id):
         keyboard = await subscription_keyboard()
         await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=keyboard, parse_mode="HTML")
@@ -112,6 +155,7 @@ async def katalog(message: Message):
 @dp.message(Command("qidirish"))
 async def qidirish(message: Message):
     users.add(message.from_user.id)
+    save_users()
     if not await check_subscription(message.from_user.id):
         keyboard = await subscription_keyboard()
         await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=keyboard, parse_mode="HTML")
@@ -186,9 +230,17 @@ async def add_movie(message: Message):
         msg_id = int(parts[2])
         nomi = parts[3] if len(parts) > 3 else kod
         movies[kod] = {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": []}
-        await message.answer(f"✅ <b>Kino qo'shildi!</b>\n\n🎬 Nomi: {nomi}\n🔑 Kod: {kod}", parse_mode="HTML")
+        save_movies()
+        await message.answer(
+            f"✅ <b>Kino qo'shildi!</b>\n\n🎬 Nomi: {nomi}\n🔑 Kod: {kod}",
+            parse_mode="HTML"
+        )
     except:
-        await message.answer("❌ Yozing:\n<code>/addmovie KOD XABAR_ID KINO_NOMI</code>\n\nMasalan:\n<code>/addmovie 001 26 Avatar</code>", parse_mode="HTML")
+        await message.answer(
+            "❌ Yozing:\n<code>/addmovie KOD XABAR_ID KINO_NOMI</code>\n\n"
+            "Masalan:\n<code>/addmovie 001 26 Avatar</code>",
+            parse_mode="HTML"
+        )
 
 @dp.message(Command("delmovie"))
 async def del_movie(message: Message):
@@ -200,6 +252,7 @@ async def del_movie(message: Message):
         if kod in movies:
             nomi = movies[kod]["nomi"]
             del movies[kod]
+            save_movies()
             await message.answer(f"✅ <b>{nomi}</b> o'chirildi!", parse_mode="HTML")
         else:
             await message.answer("❌ Bunday kod yo'q!")
@@ -213,12 +266,13 @@ async def stats(message: Message):
         return
     top_movies = sorted(movies.items(), key=lambda x: x[1]["views"], reverse=True)[:5]
     top_text = "\n".join([f"{i+1}. {v['nomi']} — {v['views']} marta" for i, (k, v) in enumerate(top_movies)])
+    yoq = "Hali yoq"
     await message.answer(
         f"📊 <b>Statistika</b>\n\n"
         f"👥 Foydalanuvchilar: {len(users)}\n"
         f"🎬 Kinolar soni: {len(movies)}\n"
         f"📢 Majburiy obunalar: {len(required_channels)}\n\n"
-        f"🔥 <b>Top kinolar:</b>\n{top_text if top_text else 'Hali yoq'}",
+        f"🔥 <b>Top kinolar:</b>\n{top_text if top_text else yoq}",
         parse_mode="HTML"
     )
 
@@ -260,6 +314,7 @@ async def list_movies(message: Message):
 @dp.message()
 async def find_movie(message: Message):
     users.add(message.from_user.id)
+    save_users()
     if not await check_subscription(message.from_user.id):
         keyboard = await subscription_keyboard()
         await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=keyboard, parse_mode="HTML")
@@ -268,7 +323,12 @@ async def find_movie(message: Message):
     if kod in movies:
         movie = movies[kod]
         movie["views"] += 1
-        await bot.forward_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+        save_movies()
+        await bot.forward_message(
+            chat_id=message.chat.id,
+            from_chat_id=CHANNEL_ID,
+            message_id=movie["msg_id"]
+        )
         keyboard = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⭐1", callback_data=f"rate_{kod}_1"),
             InlineKeyboardButton(text="⭐2", callback_data=f"rate_{kod}_2"),
@@ -276,7 +336,10 @@ async def find_movie(message: Message):
             InlineKeyboardButton(text="⭐4", callback_data=f"rate_{kod}_4"),
             InlineKeyboardButton(text="⭐5", callback_data=f"rate_{kod}_5"),
         ]])
-        await message.answer(f"🎬 <b>{movie['nomi']}</b>\n👁 {movie['views']} marta ko'rildi\n\nBaho bering:", reply_markup=keyboard, parse_mode="HTML")
+        await message.answer(
+            f"🎬 <b>{movie['nomi']}</b>\n👁 {movie['views']} marta ko'rildi\n\nBaho bering:",
+            reply_markup=keyboard, parse_mode="HTML"
+        )
     else:
         results = [(k, v) for k, v in movies.items() if kod.lower() in v["nomi"].lower()]
         if results:
@@ -285,7 +348,9 @@ async def find_movie(message: Message):
                 text += f"🎬 {v['nomi']}\n🔑 Kod: <code>{k}</code>\n\n"
             await message.answer(text, parse_mode="HTML")
         else:
-            await message.answer("❌ Bunday kino topilmadi!\n\n📚 /katalog — barcha kinolarni ko'rish\n🔎 /qidirish — kino qidirish")
+            await message.answer(
+                "❌ Bunday kino topilmadi!\n\n📚 /katalog — barcha kinolarni ko'rish\n🔎 /qidirish — kino qidirish"
+            )
 
 @dp.callback_query(F.data.startswith("rate_"))
 async def rate_movie(callback: CallbackQuery):
@@ -294,8 +359,11 @@ async def rate_movie(callback: CallbackQuery):
     ball = int(parts[2])
     if kod in movies:
         movies[kod]["ratings"].append(ball)
+        save_movies()
         avg = sum(movies[kod]["ratings"]) / len(movies[kod]["ratings"])
-        await callback.message.edit_text(f"✅ Bahoyingiz qabul qilindi: {'⭐' * ball}\n📊 O'rtacha reyting: ⭐{avg:.1f}")
+        await callback.message.edit_text(
+            f"✅ Bahoyingiz qabul qilindi: {'⭐' * ball}\n📊 O'rtacha reyting: ⭐{avg:.1f}"
+        )
     await callback.answer()
 
 async def main():
