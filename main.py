@@ -1,5 +1,3 @@
-
-
 import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
@@ -43,4 +41,8 @@ async def find_movie(message: Message):
     else:
         await message.answer("❌ Bunday kod topilmadi. /katalog yuboring.")
 
-asyncio.run(dp.start_polling(bot))
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
