@@ -1,3 +1,4 @@
+cat > /mnt/user-data/outputs/main.py << 'ENDOFFILE'
 import asyncio
 import os
 import httpx
@@ -156,8 +157,8 @@ async def subscription_keyboard():
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔍 Film qidirish"), KeyboardButton(text="📚 Katalog")],
-            [KeyboardButton(text="📦 Zakaz berish"), KeyboardButton(text="ℹ️ Yordam")],
+            [KeyboardButton(text="Film qidirish"), KeyboardButton(text="Katalog")],
+            [KeyboardButton(text="Zakaz berish"), KeyboardButton(text="Yordam")],
         ],
         resize_keyboard=True
     )
@@ -501,19 +502,19 @@ async def list_movies(message: Message):
 
 # ===================== TUGMALAR =====================
 
-@dp.message(F.text == "🔍 Film qidirish")
+@dp.message(F.text == "Film qidirish")
 async def film_qidirish_btn(message: Message):
     await message.answer("🔍 Kino nomini yoki kodini yuboring:")
 
-@dp.message(F.text == "📚 Katalog")
+@dp.message(F.text == "Katalog")
 async def katalog_btn(message: Message):
     await katalog(message)
 
-@dp.message(F.text == "📦 Zakaz berish")
+@dp.message(F.text == "Zakaz berish")
 async def zakaz_btn(message: Message):
     await message.answer("📦 <b>Kino zakaz berish</b>\n\nQuyidagi formatda yozing:\n<code>/zakaz Kino nomi</code>\n\nMasalan: <code>/zakaz Avatar 3</code>", parse_mode="HTML")
 
-@dp.message(F.text == "ℹ️ Yordam")
+@dp.message(F.text == "Yordam")
 async def yordam_btn(message: Message):
     await help_cmd(message)
 
@@ -571,3 +572,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+ENDOFFILE
+echo "Done"
