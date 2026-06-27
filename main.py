@@ -1,82 +1,120 @@
 import asyncio
 import os
+import httpx
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiohttp import web
-from supabase import create_client, Client
 
 TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
-KARTA_RAQAM = "5614 6873 0746 5246"  # <-- O'z karta raqamingizni yozing
+KARTA_RAQAM = "5614 6873 0746 5246"  # O'z karta raqamingizni yozing
 ZAKAZ_NARXI = 10000
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-
 required_channels = []
 
-# ===================== SUPABASE FUNKSIYALAR =====================
+# ===================== HTTPX SUPABASE =====================
+
+def headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+
+def db_url(table):
+    return f"{SUPABASE_URL}/rest/v1/{table}"
 
 def load_movies():
-    res = supabase.table("movies").select("*").execute()
-    movies = {}
-    for row in res.data:
-        movies[row["kod"]] = {
-            "nomi": row["nomi"],
-            "msg_id": row["msg_id"],
-            "views": row["views"],
-            "ratings": row["ratings"]
-        }
-    return movies
+    with httpx.Client() as client:
+        res = client.get(db_url("movies"), headers=headers())
+        movies = {}
+        for row in res.json():
+            ratings = row.get("ratings") or []
+            movies[row["kod"]] = {
+                "nomi": row["nomi"],
+                "msg_id": row["msg_id"],
+                "views": row["views"],
+                "ratings": ratings
+            }
+        return movies
 
 def save_movie(kod, data):
-    supabase.table("movies").upsert({
-        "kod": kod,
-        "nomi": data["nomi"],
-        "msg_id": data["msg_id"],
-        "views": data["views"],
-        "ratings": data["ratings"]
-    }).execute()
+    with httpx.Client() as client:
+        payload = {
+            "kod": kod,
+            "nomi": data["nomi"],
+            "msg_id": data["msg_id"],
+            "views": data["views"],
+            "ratings": data["ratings"]
+        }
+        client.post(
+            db_url("movies") + "?on_conflict=kod",
+            headers={**headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json=payload
+        )
 
 def delete_movie(kod):
-    supabase.table("movies").delete().eq("kod", kod).execute()
+    with httpx.Client() as client:
+        client.delete(db_url("movies") + f"?kod=eq.{kod}", headers=headers())
 
 def save_user(user_id):
-    supabase.table("users").upsert({"user_id": user_id}).execute()
+    with httpx.Client() as client:
+        client.post(
+            db_url("users") + "?on_conflict=user_id",
+            headers={**headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json={"user_id": user_id}
+        )
 
 def get_user_count():
-    res = supabase.table("users").select("user_id", count="exact").execute()
-    return res.count
+    with httpx.Client() as client:
+        res = client.get(
+            db_url("users"),
+            headers={**headers(), "Prefer": "count=exact"},
+            params={"select": "user_id"}
+        )
+        count = res.headers.get("content-range", "0/0").split("/")[-1]
+        return int(count) if count.isdigit() else 0
 
-# ===================== ZAKAZ FUNKSIYALAR =====================
+def get_all_users():
+    with httpx.Client() as client:
+        res = client.get(db_url("users"), headers=headers(), params={"select": "user_id"})
+        return [row["user_id"] for row in res.json()]
 
 def create_zakaz(user_id, username, kino_nomi):
-    res = supabase.table("zakazlar").insert({
-        "user_id": user_id,
-        "username": username or "",
-        "kino_nomi": kino_nomi,
-        "status": "kutilmoqda"
-    }).execute()
-    return res.data[0]["id"]
+    with httpx.Client() as client:
+        res = client.post(
+            db_url("zakazlar"),
+            headers=headers(),
+            json={"user_id": user_id, "username": username, "kino_nomi": kino_nomi, "status": "kutilmoqda"}
+        )
+        return res.json()[0]["id"]
 
 def get_zakaz(zakaz_id):
-    res = supabase.table("zakazlar").select("*").eq("id", zakaz_id).execute()
-    if res.data:
-        return res.data[0]
-    return None
+    with httpx.Client() as client:
+        res = client.get(db_url("zakazlar") + f"?id=eq.{zakaz_id}", headers=headers())
+        data = res.json()
+        return data[0] if data else None
 
 def update_zakaz_status(zakaz_id, status):
-    supabase.table("zakazlar").update({"status": status}).eq("id", zakaz_id).execute()
+    with httpx.Client() as client:
+        client.patch(
+            db_url("zakazlar") + f"?id=eq.{zakaz_id}",
+            headers=headers(),
+            json={"status": status}
+        )
 
 def get_all_zakazlar():
-    res = supabase.table("zakazlar").select("*").eq("status", "kutilmoqda").execute()
-    return res.data
+    with httpx.Client() as client:
+        res = client.get(db_url("zakazlar") + "?status=eq.kutilmoqda", headers=headers())
+        return res.json()
 
 # ===================== HTTP SERVER =====================
 
@@ -116,16 +154,15 @@ async def subscription_keyboard():
 # ===================== PASTKI MENYU =====================
 
 def main_keyboard():
-    keyboard = ReplyKeyboardMarkup(
+    return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🔍 Film qidirish"), KeyboardButton(text="📚 Katalog")],
             [KeyboardButton(text="📦 Zakaz berish"), KeyboardButton(text="ℹ️ Yordam")],
         ],
         resize_keyboard=True
     )
-    return keyboard
 
-# ===================== FOYDALANUVCHI BUYRUQLARI =====================
+# ===================== FOYDALANUVCHI =====================
 
 @dp.message(Command("start"))
 async def start(message: Message):
@@ -211,7 +248,7 @@ async def qidirish(message: Message):
         text += f"🎬 <b>{info['nomi']}</b>\n🔑 Kod: <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
-# ===================== ZAKAZ TIZIMI =====================
+# ===================== ZAKAZ =====================
 
 @dp.message(Command("zakaz"))
 async def zakaz_cmd(message: Message):
@@ -237,7 +274,6 @@ async def zakaz_cmd(message: Message):
         f"⏳ Admin tekshirib, kinoni yuboradi.",
         parse_mode="HTML"
     )
-    # Adminga xabar
     await bot.send_message(
         ADMIN_ID,
         f"🆕 <b>Yangi zakaz!</b>\n\n"
@@ -249,15 +285,11 @@ async def zakaz_cmd(message: Message):
         parse_mode="HTML"
     )
 
-# Screenshot qabul qilish
 @dp.message(F.photo)
 async def screenshot_handler(message: Message):
-    # Foydalanuvchi screenshot yubordi — adminga forward qilamiz
     user = message.from_user
     username = user.username or user.full_name
     caption = message.caption or ""
-
-    # Adminga forward
     await bot.send_photo(
         ADMIN_ID,
         photo=message.photo[-1].file_id,
@@ -270,13 +302,9 @@ async def screenshot_handler(message: Message):
         ),
         parse_mode="HTML"
     )
-    await message.answer(
-        "✅ <b>Screenshotingiz adminga yuborildi!</b>\n\n"
-        "⏳ Admin tekshirib, tez orada kinoni yuboradi.",
-        parse_mode="HTML"
-    )
+    await message.answer("✅ <b>Screenshotingiz adminga yuborildi!</b>\n\n⏳ Admin tekshirib, tez orada kinoni yuboradi.", parse_mode="HTML")
 
-# ===================== ADMIN ZAKAZ BUYRUQLARI =====================
+# ===================== ADMIN ZAKAZ =====================
 
 @dp.message(Command("tasdiqlash"))
 async def tasdiqlash_cmd(message: Message):
@@ -296,28 +324,12 @@ async def tasdiqlash_cmd(message: Message):
             await message.answer(f"❌ <code>{kino_kod}</code> kodli kino topilmadi!\n\nKinolar: /listmovies", parse_mode="HTML")
             return
         movie = movies[kino_kod]
-        # Foydalanuvchiga kino yuborish
-        await bot.forward_message(
-            chat_id=zakaz["user_id"],
-            from_chat_id=CHANNEL_ID,
-            message_id=movie["msg_id"]
-        )
-        await bot.send_message(
-            zakaz["user_id"],
-            f"🎉 <b>Zakazingiz tasdiqlandi!</b>\n\n"
-            f"🎬 <b>{movie['nomi']}</b> kinosi yuborildi!\n"
-            f"🆔 Zakaz ID: {zakaz_id}\n\n"
-            f"Rohatingiz kelsin! 🍿",
-            parse_mode="HTML"
-        )
+        await bot.forward_message(chat_id=zakaz["user_id"], from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+        await bot.send_message(zakaz["user_id"], f"🎉 <b>Zakazingiz tasdiqlandi!</b>\n\n🎬 <b>{movie['nomi']}</b> kinosi yuborildi!\n\nRohatingiz kelsin! 🍿", parse_mode="HTML")
         update_zakaz_status(zakaz_id, "tasdiqlangan")
-        await message.answer(f"✅ Zakaz #{zakaz_id} tasdiqlandi va kino yuborildi!", parse_mode="HTML")
+        await message.answer(f"✅ Zakaz #{zakaz_id} tasdiqlandi va kino yuborildi!")
     except IndexError:
-        await message.answer(
-            "❌ Yozing: <code>/tasdiqlash ZAKAZ_ID KINO_KODI</code>\n\n"
-            "Masalan: <code>/tasdiqlash 5 001</code>",
-            parse_mode="HTML"
-        )
+        await message.answer("❌ Yozing: <code>/tasdiqlash ZAKAZ_ID KINO_KODI</code>\n\nMasalan: <code>/tasdiqlash 5 001</code>", parse_mode="HTML")
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
 
@@ -333,14 +345,7 @@ async def rad_cmd(message: Message):
             await message.answer("❌ Bunday zakaz topilmadi!")
             return
         update_zakaz_status(zakaz_id, "rad etilgan")
-        await bot.send_message(
-            zakaz["user_id"],
-            f"❌ <b>Zakazingiz rad etildi!</b>\n\n"
-            f"🆔 Zakaz ID: {zakaz_id}\n"
-            f"🎬 Kino: {zakaz['kino_nomi']}\n\n"
-            f"Muammo bo'lsa admin bilan bog'laning.",
-            parse_mode="HTML"
-        )
+        await bot.send_message(zakaz["user_id"], f"❌ <b>Zakazingiz rad etildi!</b>\n\n🆔 Zakaz ID: {zakaz_id}\n🎬 Kino: {zakaz['kino_nomi']}\n\nMuammo bo'lsa admin bilan bog'laning.", parse_mode="HTML")
         await message.answer(f"✅ Zakaz #{zakaz_id} rad etildi.")
     except IndexError:
         await message.answer("❌ Yozing: <code>/rad ZAKAZ_ID</code>", parse_mode="HTML")
@@ -359,10 +364,10 @@ async def zakazlar_cmd(message: Message):
     text = "📋 <b>Kutilayotgan zakazlar:</b>\n\n"
     for z in zakazlar:
         text += f"🆔 ID: {z['id']} | 🎬 {z['kino_nomi']} | 👤 @{z['username']}\n"
-    text += "\n✅ Tasdiqlash: /tasdiqlash [id] [kino_kodi]\n❌ Rad etish: /rad [id]"
+    text += "\n✅ /tasdiqlash [id] [kino_kodi]\n❌ /rad [id]"
     await message.answer(text, parse_mode="HTML")
 
-# ===================== ADMIN BOSHQA BUYRUQLARI =====================
+# ===================== ADMIN BOSHQA =====================
 
 @dp.message(Command("addsub"))
 async def add_sub(message: Message):
@@ -417,8 +422,7 @@ async def add_movie(message: Message):
         kod = parts[1]
         msg_id = int(parts[2])
         nomi = parts[3] if len(parts) > 3 else kod
-        data = {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": []}
-        save_movie(kod, data)
+        save_movie(kod, {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": []})
         await message.answer(f"✅ <b>Kino qo'shildi!</b>\n\n🎬 Nomi: {nomi}\n🔑 Kod: {kod}", parse_mode="HTML")
     except:
         await message.answer("❌ Yozing:\n<code>/addmovie KOD XABAR_ID KINO_NOMI</code>\n\nMasalan:\n<code>/addmovie 001 26 Avatar</code>", parse_mode="HTML")
@@ -470,12 +474,12 @@ async def reklama(message: Message):
         await message.answer("❌ Yozing: <code>/reklama Xabar matni</code>", parse_mode="HTML")
         return
     text = args[1]
-    res = supabase.table("users").select("user_id").execute()
+    users = get_all_users()
     success = 0
     fail = 0
-    for row in res.data:
+    for user_id in users:
         try:
-            await bot.send_message(row["user_id"], f"📢 <b>Reklama</b>\n\n{text}", parse_mode="HTML")
+            await bot.send_message(user_id, f"📢 <b>Reklama</b>\n\n{text}", parse_mode="HTML")
             success += 1
         except:
             fail += 1
@@ -495,11 +499,11 @@ async def list_movies(message: Message):
         text += f"▫️ {info['nomi']} | Kod: <code>{kod}</code> | Ko'rishlar: {info['views']}\n"
     await message.answer(text, parse_mode="HTML")
 
-# ===================== KINO QIDIRISH =====================
+# ===================== TUGMALAR =====================
 
 @dp.message(F.text == "🔍 Film qidirish")
 async def film_qidirish_btn(message: Message):
-    await message.answer("🔍 Kino nomini yoki kodini yuboring:", parse_mode="HTML")
+    await message.answer("🔍 Kino nomini yoki kodini yuboring:")
 
 @dp.message(F.text == "📚 Katalog")
 async def katalog_btn(message: Message):
@@ -507,13 +511,7 @@ async def katalog_btn(message: Message):
 
 @dp.message(F.text == "📦 Zakaz berish")
 async def zakaz_btn(message: Message):
-    await message.answer(
-        "📦 <b>Kino zakaz berish</b>\n\n"
-        "Quyidagi formatda yozing:\n"
-        "<code>/zakaz Kino nomi</code>\n\n"
-        "Masalan: <code>/zakaz Avatar 3</code>",
-        parse_mode="HTML"
-    )
+    await message.answer("📦 <b>Kino zakaz berish</b>\n\nQuyidagi formatda yozing:\n<code>/zakaz Kino nomi</code>\n\nMasalan: <code>/zakaz Avatar 3</code>", parse_mode="HTML")
 
 @dp.message(F.text == "ℹ️ Yordam")
 async def yordam_btn(message: Message):
@@ -551,12 +549,7 @@ async def find_movie(message: Message):
                 text += f"🎬 {v['nomi']}\n🔑 Kod: <code>{k}</code>\n\n"
             await message.answer(text, parse_mode="HTML")
         else:
-            await message.answer(
-                "❌ Bunday kino topilmadi!\n\n"
-                "📚 /katalog — barcha kinolarni ko'rish\n"
-                "🔎 /qidirish — kino qidirish\n"
-                "📦 /zakaz — kino zakaz berish"
-            )
+            await message.answer("❌ Bunday kino topilmadi!\n\n📚 /katalog — barcha kinolarni ko'rish\n🔎 /qidirish — kino qidirish\n📦 /zakaz — kino zakaz berish")
 
 @dp.callback_query(F.data.startswith("rate_"))
 async def rate_movie(callback: CallbackQuery):
