@@ -10,7 +10,7 @@ TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
 KARTA_RAQAM = "5614 6873 0746 5246"  # O'z karta raqamingizni yozing
-ZAKAZ_NARXI = 10000
+ZAKAZ_NARXI = 5000
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -156,8 +156,8 @@ async def subscription_keyboard():
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Film qidirish"), KeyboardButton(text="Katalog")],
-            [KeyboardButton(text="Zakaz berish"), KeyboardButton(text="Yordam")],
+            [KeyboardButton(text="/qidirish"), KeyboardButton(text="/katalog")],
+            [KeyboardButton(text="/zakaz"), KeyboardButton(text="/help")],
         ],
         resize_keyboard=True
     )
@@ -501,21 +501,7 @@ async def list_movies(message: Message):
 
 # ===================== TUGMALAR =====================
 
-@dp.message(F.text == "Film qidirish")
-async def film_qidirish_btn(message: Message):
-    await message.answer("🔍 Kino nomini yoki kodini yuboring:")
 
-@dp.message(F.text == "Katalog")
-async def katalog_btn(message: Message):
-    await katalog(message)
-
-@dp.message(F.text == "Zakaz berish")
-async def zakaz_btn(message: Message):
-    await message.answer("📦 <b>Kino zakaz berish</b>\n\nQuyidagi formatda yozing:\n<code>/zakaz Kino nomi</code>\n\nMasalan: <code>/zakaz Avatar 3</code>", parse_mode="HTML")
-
-@dp.message(F.text == "Yordam")
-async def yordam_btn(message: Message):
-    await help_cmd(message)
 
 # ===================== KINO TOPISH =====================
 
