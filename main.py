@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiohttp import web
 from supabase import create_client, Client
 
-TOKEN = os.environ.get("8786835988:AAEFXWRGRsaSoVy4uldfW277O0ib93m6iF8")
+TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
 KARTA_RAQAM = "5614 6873 0746 5246"  # <-- O'z karta raqamingizni yozing
