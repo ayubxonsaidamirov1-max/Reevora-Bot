@@ -1,4 +1,3 @@
-cat > /mnt/user-data/outputs/main.py << 'ENDOFFILE'
 import asyncio
 import os
 import httpx
@@ -572,5 +571,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-ENDOFFILE
-echo "Done"
