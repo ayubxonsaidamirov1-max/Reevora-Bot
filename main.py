@@ -140,8 +140,8 @@ async def subscription_keyboard():
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🔍 Qidirish"), KeyboardButton(text="📚 Katalog")],
-            [KeyboardButton(text="📦 Zakaz berish"), KeyboardButton(text="ℹ️ Yordam")],
+            [KeyboardButton(text="/qidirish"), KeyboardButton(text="/katalog")],
+            [KeyboardButton(text="/zakaz"), KeyboardButton(text="/help")],
         ],
         resize_keyboard=True
     )
@@ -483,28 +483,6 @@ async def reklama(message: Message):
             fail += 1
     await message.answer(f"✅ Yuborildi!\n✔️ Muvaffaqiyatli: {success}\n❌ Xato: {fail}")
 
-# ===================== TUGMALAR =====================
-
-@dp.message(F.text == "🔍 Qidirish")
-async def btn_qidirish(message: Message):
-    await message.answer("🔍 Kino nomini yuboring:")
-
-@dp.message(F.text == "📚 Katalog")
-async def btn_katalog(message: Message):
-    await katalog(message)
-
-@dp.message(F.text == "📦 Zakaz berish")
-async def btn_zakaz(message: Message):
-    await message.answer(
-        "📦 <b>Zakaz berish</b>\n\n"
-        "Quyidagi formatda yozing:\n<code>/zakaz Kino nomi</code>\n\n"
-        "Masalan: <code>/zakaz Avatar</code>",
-        parse_mode="HTML"
-    )
-
-@dp.message(F.text == "ℹ️ Yordam")
-async def btn_yordam(message: Message):
-    await help_cmd(message)
 
 # ===================== KINO QIDIRISH (ASOSIY) =====================
 
