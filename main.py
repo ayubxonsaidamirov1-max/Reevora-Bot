@@ -1,5 +1,7 @@
 import asyncio
 import os
+import random
+from datetime import datetime, timedelta
 import httpx
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
@@ -12,6 +14,7 @@ CHANNEL_ID = -1003948451744
 ADMIN_ID = 8490510878
 KARTA_RAQAM = "5614 6873 0746 5246"
 ZAKAZ_NARXI = 2000
+ADMIN_USERNAME = "@sdmirv"
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
@@ -20,6 +23,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 required_channels = []
 
+# ===== SUPABASE =====
 def headers():
     return {
         "apikey": SUPABASE_KEY,
@@ -31,6 +35,33 @@ def headers():
 def db_url(table):
     return f"{SUPABASE_URL}/rest/v1/{table}"
 
+# ===== ADMIN =====
+def get_admins():
+    try:
+        with httpx.Client() as client:
+            res = client.get(db_url("admins"), headers=headers())
+            return [row["user_id"] for row in res.json()]
+    except:
+        return []
+
+def add_admin_db(user_id):
+    with httpx.Client() as client:
+        client.post(
+            db_url("admins") + "?on_conflict=user_id",
+            headers={**headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
+            json={"user_id": user_id}
+        )
+
+def remove_admin_db(user_id):
+    with httpx.Client() as client:
+        client.delete(db_url("admins") + f"?user_id=eq.{user_id}", headers=headers())
+
+def is_admin(user_id):
+    if user_id == ADMIN_ID:
+        return True
+    return user_id in get_admins()
+
+# ===== MOVIES =====
 def load_movies():
     with httpx.Client() as client:
         res = client.get(db_url("movies"), headers=headers())
@@ -40,7 +71,8 @@ def load_movies():
                 "nomi": row["nomi"],
                 "msg_id": row["msg_id"],
                 "views": row["views"],
-                "ratings": row.get("ratings") or []
+                "ratings": row.get("ratings") or [],
+                "janr": row.get("janr") or ""
             }
         return movies
 
@@ -49,13 +81,21 @@ def save_movie(kod, data):
         client.post(
             db_url("movies") + "?on_conflict=kod",
             headers={**headers(), "Prefer": "resolution=merge-duplicates,return=representation"},
-            json={"kod": kod, "nomi": data["nomi"], "msg_id": data["msg_id"], "views": data["views"], "ratings": data["ratings"]}
+            json={
+                "kod": kod,
+                "nomi": data["nomi"],
+                "msg_id": data["msg_id"],
+                "views": data["views"],
+                "ratings": data["ratings"],
+                "janr": data.get("janr", "")
+            }
         )
 
 def delete_movie(kod):
     with httpx.Client() as client:
         client.delete(db_url("movies") + f"?kod=eq.{kod}", headers=headers())
 
+# ===== USERS =====
 def save_user(user_id):
     with httpx.Client() as client:
         client.post(
@@ -75,6 +115,7 @@ def get_all_users():
         res = client.get(db_url("users"), headers=headers(), params={"select": "user_id"})
         return [row["user_id"] for row in res.json()]
 
+# ===== ZAKAZ =====
 def create_zakaz(user_id, username, kino_nomi):
     with httpx.Client() as client:
         res = client.post(
@@ -99,6 +140,7 @@ def get_all_zakazlar():
         res = client.get(db_url("zakazlar") + "?status=eq.kutilmoqda", headers=headers())
         return res.json()
 
+# ===== WEB SERVER =====
 async def start_web():
     app = web.Application()
     app.router.add_get("/", lambda r: web.Response(text="OK"))
@@ -106,6 +148,7 @@ async def start_web():
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", 8080).start()
 
+# ===== SUBSCRIPTION =====
 async def check_subscription(user_id):
     if not required_channels:
         return True
@@ -130,14 +173,48 @@ async def subscription_keyboard():
     buttons.append([InlineKeyboardButton(text="✅ Obuna bo'ldim!", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+# ===== KEYBOARD =====
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="/katalog"), KeyboardButton(text="/help")],
-            [KeyboardButton(text="/zakaz")],
+            [KeyboardButton(text="🎬 Kinolar"), KeyboardButton(text="⭐ Top kinolar")],
+            [KeyboardButton(text="🎭 Janrlar"), KeyboardButton(text="🎲 Tasodifiy")],
+            [KeyboardButton(text="🆕 Yangi kinolar"), KeyboardButton(text="📦 Zakaz")],
+            [KeyboardButton(text="👤 Profil"), KeyboardButton(text="❓ Yordam")],
         ],
         resize_keyboard=True
     )
+
+# ===== KUNLIK TAVSIYA =====
+async def send_daily_recommendation():
+    while True:
+        now = datetime.now()
+        target = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        await asyncio.sleep((target - now).total_seconds())
+        try:
+            movies = load_movies()
+            if not movies:
+                continue
+            kod, movie = random.choice(list(movies.items()))
+            users = get_all_users()
+            text = (
+                f"🌟 <b>Kunlik tavsiya!</b>\n\n"
+                f"🎬 <b>{movie['nomi']}</b>\n"
+                f"🔑 Kod: <code>{kod}</code>\n\n"
+                f"Shu kinoni ko'rish uchun kodni yuboring! 🍿"
+            )
+            for user_id in users:
+                try:
+                    await bot.send_message(user_id, text, parse_mode="HTML")
+                    await asyncio.sleep(0.05)
+                except:
+                    pass
+        except Exception as e:
+            print(f"Kunlik tavsiya xatosi: {e}")
+
+# ===== HANDLERS =====
 
 @dp.message(Command("start"))
 async def start(message: Message):
@@ -147,12 +224,10 @@ async def start(message: Message):
         await message.answer("⚠️ <b>Botdan foydalanish uchun kanallarga obuna bo'ling:</b>", reply_markup=kb, parse_mode="HTML")
         return
     await message.answer(
-        "🎬 <b>Reevora Cinema Bot</b>ga xush kelibsiz!\n\n"
+        "🎬 <b>Reevora Cinema</b>ga xush kelibsiz!\n\n"
         "🔍 Kino <b>kodini</b> yuboring — film keladi\n"
         "📝 Kino <b>nomini</b> yuboring — qidiruv\n"
-        "📦 /zakaz Avatar — kino zakaz berish\n"
-        "📚 /katalog — barcha kinolar\n"
-        "ℹ️ /help — yordam",
+        "👇 Menyu tugmalaridan foydalaning",
         reply_markup=main_keyboard(),
         parse_mode="HTML"
     )
@@ -167,15 +242,196 @@ async def check_sub_callback(callback: CallbackQuery):
         await callback.message.edit_text("⚠️ <b>Hali barcha kanallarga obuna bo'lmadingiz!</b>", reply_markup=kb, parse_mode="HTML")
     await callback.answer()
 
+# ===== MENYU TUGMALARI =====
+
+@dp.message(F.text == "🎬 Kinolar")
+async def kinolar_btn(message: Message):
+    save_user(message.from_user.id)
+    if not await check_subscription(message.from_user.id):
+        kb = await subscription_keyboard()
+        await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
+        return
+    movies = load_movies()
+    if not movies:
+        await message.answer("📭 Hozircha kinolar yo'q!")
+        return
+    text = "🎬 <b>Barcha kinolar:</b>\n\n"
+    for kod, info in movies.items():
+        stars = ""
+        if info["ratings"]:
+            avg = sum(info["ratings"]) / len(info["ratings"])
+            stars = f" ⭐{avg:.1f}"
+        janr = f" | {info['janr']}" if info.get("janr") else ""
+        text += f"🎬 <b>{info['nomi']}</b>{stars}{janr}\n🔑 Kod: <code>{kod}</code>\n\n"
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(F.text == "⭐ Top kinolar")
+async def top_kinolar_btn(message: Message):
+    save_user(message.from_user.id)
+    if not await check_subscription(message.from_user.id):
+        kb = await subscription_keyboard()
+        await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
+        return
+    movies = load_movies()
+    if not movies:
+        await message.answer("📭 Hozircha kinolar yo'q!")
+        return
+    top = sorted(movies.items(), key=lambda x: x[1]["views"], reverse=True)[:10]
+    text = "🏆 <b>Top 10 kinolar:</b>\n\n"
+    for i, (kod, info) in enumerate(top, 1):
+        stars = ""
+        if info["ratings"]:
+            avg = sum(info["ratings"]) / len(info["ratings"])
+            stars = f" ⭐{avg:.1f}"
+        text += f"{i}. <b>{info['nomi']}</b>{stars}\n   👁 {info['views']} marta | 🔑 <code>{kod}</code>\n\n"
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(F.text == "🎭 Janrlar")
+async def janrlar_btn(message: Message):
+    save_user(message.from_user.id)
+    if not await check_subscription(message.from_user.id):
+        kb = await subscription_keyboard()
+        await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
+        return
+    movies = load_movies()
+    janrlar = set()
+    for info in movies.values():
+        if info.get("janr"):
+            janrlar.add(info["janr"].lower().strip())
+    if not janrlar:
+        await message.answer(
+            "📭 Hozircha janrlar belgilanmagan!\n\n"
+            "Admin kino qo'shayotganda janr ham kiriting:\n"
+            "<code>/addmovie KOD MSG_ID NOMI janr:komediya</code>",
+            parse_mode="HTML"
+        )
+        return
+    buttons = []
+    for janr in sorted(janrlar):
+        buttons.append([InlineKeyboardButton(text=f"🎭 {janr.capitalize()}", callback_data=f"janr_{janr}")])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await message.answer("🎭 <b>Janrni tanlang:</b>", reply_markup=kb, parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("janr_"))
+async def janr_callback(callback: CallbackQuery):
+    janr = callback.data[5:]
+    movies = load_movies()
+    results = [(k, v) for k, v in movies.items() if v.get("janr", "").lower().strip() == janr]
+    if not results:
+        await callback.message.answer(f"📭 <b>{janr.capitalize()}</b> janrida kino topilmadi!")
+        await callback.answer()
+        return
+    text = f"🎭 <b>{janr.capitalize()} kinolari:</b>\n\n"
+    for k, v in results:
+        stars = ""
+        if v["ratings"]:
+            avg = sum(v["ratings"]) / len(v["ratings"])
+            stars = f" ⭐{avg:.1f}"
+        text += f"🎬 <b>{v['nomi']}</b>{stars}\n🔑 Kod: <code>{k}</code>\n\n"
+    await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+@dp.message(F.text == "🎲 Tasodifiy")
+async def tasodifiy_btn(message: Message):
+    save_user(message.from_user.id)
+    if not await check_subscription(message.from_user.id):
+        kb = await subscription_keyboard()
+        await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
+        return
+    movies = load_movies()
+    if not movies:
+        await message.answer("📭 Hozircha kinolar yo'q!")
+        return
+    kod, movie = random.choice(list(movies.items()))
+    movie["views"] += 1
+    save_movie(kod, movie)
+    await bot.forward_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="⭐1", callback_data=f"rate_{kod}_1"),
+        InlineKeyboardButton(text="⭐2", callback_data=f"rate_{kod}_2"),
+        InlineKeyboardButton(text="⭐3", callback_data=f"rate_{kod}_3"),
+        InlineKeyboardButton(text="⭐4", callback_data=f"rate_{kod}_4"),
+        InlineKeyboardButton(text="⭐5", callback_data=f"rate_{kod}_5"),
+    ]])
+    await message.answer(
+        f"🎲 <b>Tasodifiy kino: {movie['nomi']}</b>\n"
+        f"👁 {movie['views']} marta ko'rildi\n\nBaho bering:",
+        reply_markup=kb, parse_mode="HTML"
+    )
+
+@dp.message(F.text == "🆕 Yangi kinolar")
+async def yangi_kinolar_btn(message: Message):
+    save_user(message.from_user.id)
+    if not await check_subscription(message.from_user.id):
+        kb = await subscription_keyboard()
+        await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
+        return
+    movies = load_movies()
+    if not movies:
+        await message.answer("📭 Hozircha kinolar yo'q!")
+        return
+    yangi = list(movies.items())[-10:]
+    yangi.reverse()
+    text = "🆕 <b>Yangi qo'shilgan kinolar:</b>\n\n"
+    for kod, info in yangi:
+        stars = ""
+        if info["ratings"]:
+            avg = sum(info["ratings"]) / len(info["ratings"])
+            stars = f" ⭐{avg:.1f}"
+        text += f"🎬 <b>{info['nomi']}</b>{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(F.text == "📦 Zakaz")
+async def zakaz_btn(message: Message):
+    await message.answer(
+        "📦 <b>Zakaz berish</b>\n\n"
+        "Quyidagicha yuboring:\n"
+        "<code>/zakaz Avatar</code>",
+        parse_mode="HTML"
+    )
+
+@dp.message(F.text == "👤 Profil")
+async def profil_btn(message: Message):
+    save_user(message.from_user.id)
+    user = message.from_user
+    user_count = get_user_count()
+    await message.answer(
+        f"👤 <b>Profil</b>\n\n"
+        f"🆔 ID: <code>{user.id}</code>\n"
+        f"📛 Ism: {user.full_name}\n"
+        f"👥 Botdagi foydalanuvchilar: {user_count}",
+        parse_mode="HTML"
+    )
+
+@dp.message(F.text == "❓ Yordam")
+async def yordam_btn(message: Message):
+    await message.answer(
+        "❓ <b>Yordam bo'limi</b>\n\n"
+        "🔍 <b>Kino qidirish:</b>\n"
+        "Kino kodini yoki nomini yuboring\n\n"
+        "📋 <b>Menyu tugmalari:</b>\n"
+        "🎬 Kinolar — barcha kinolar\n"
+        "⭐ Top kinolar — eng ko'p ko'rilganlar\n"
+        "🎭 Janrlar — janr bo'yicha qidiruv\n"
+        "🎲 Tasodifiy — tasodifiy kino\n"
+        "🆕 Yangi kinolar — oxirgi qo'shilganlar\n"
+        "📦 Zakaz — kino buyurtma qilish\n"
+        "👤 Profil — shaxsiy ma'lumotlar\n\n"
+        f"💬 <b>Muammo bo'lsa?</b>\n"
+        f"Admin: {ADMIN_USERNAME}",
+        parse_mode="HTML"
+    )
+
+# ===== COMMANDS =====
+
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
     await message.answer(
-        "📖 <b>Yordam</b>\n\n"
+        "❓ <b>Yordam</b>\n\n"
         "▫️ Kino <b>kodini</b> yuboring → film keladi\n"
         "▫️ Kino <b>nomini</b> yuboring → qidiruv\n"
-        "▫️ /katalog → barcha kinolar\n"
-        "▫️ /zakaz Avatar → kino zakaz qilish\n\n"
-        "⭐ Kino kelgandan so'ng baho bering!",
+        "▫️ /zakaz Avatar → kino buyurtma\n\n"
+        f"💬 Muammo bo'lsa: {ADMIN_USERNAME}",
         parse_mode="HTML"
     )
 
@@ -199,7 +455,8 @@ async def katalog(message: Message):
         text += f"🎬 <b>{info['nomi']}</b>{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
-# ZAKAZ - CommandObject ishlatildi, bu eng ishonchli usul
+# ===== ZAKAZ =====
+
 @dp.message(Command("zakaz"))
 async def zakaz_cmd(message: Message, command: CommandObject):
     save_user(message.from_user.id)
@@ -208,7 +465,7 @@ async def zakaz_cmd(message: Message, command: CommandObject):
         await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
         return
 
-    kino_nomi = command.args  # /zakaz Avatar => args = "Avatar"
+    kino_nomi = command.args
 
     if not kino_nomi:
         await message.answer(
@@ -258,11 +515,59 @@ async def screenshot_handler(message: Message):
         ),
         parse_mode="HTML"
     )
-    await message.answer("✅ <b>Screenshot adminga yuborildi!</b>\n\n⏳ Admin kinoni tez yuboradi.", parse_mode="HTML")
+    await message.answer(
+        "✅ <b>Screenshot adminga yuborildi!</b>\n\n"
+        "⏳ Admin kinoni tez yuboradi.",
+        parse_mode="HTML"
+    )
+
+# ===== ADMIN COMMANDS =====
+
+@dp.message(Command("addadmin"))
+async def add_admin_cmd(message: Message, command: CommandObject):
+    if not is_admin(message.from_user.id):
+        return
+    if not command.args:
+        await message.answer("❌ Format: <code>/addadmin USER_ID</code>", parse_mode="HTML")
+        return
+    try:
+        new_admin_id = int(command.args.strip())
+        add_admin_db(new_admin_id)
+        await message.answer(f"✅ Yangi admin qo'shildi!\nID: <code>{new_admin_id}</code>", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+@dp.message(Command("removeadmin"))
+async def remove_admin_cmd(message: Message, command: CommandObject):
+    if message.from_user.id != ADMIN_ID:
+        return
+    if not command.args:
+        await message.answer("❌ Format: <code>/removeadmin USER_ID</code>", parse_mode="HTML")
+        return
+    try:
+        admin_id = int(command.args.strip())
+        remove_admin_db(admin_id)
+        await message.answer(f"✅ Admin o'chirildi!\nID: <code>{admin_id}</code>", parse_mode="HTML")
+    except Exception as e:
+        await message.answer(f"❌ Xato: {e}")
+
+@dp.message(Command("admins"))
+async def admins_cmd(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    admins = get_admins()
+    text = "👑 <b>Adminlar ro'yxati:</b>\n\n"
+    text += f"⭐ Super admin: <code>{ADMIN_ID}</code>\n\n"
+    if admins:
+        for i, admin_id in enumerate(admins, 1):
+            text += f"{i}. <code>{admin_id}</code>\n"
+    else:
+        text += "Qo'shimcha adminlar yo'q."
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("tasdiqlash"))
 async def tasdiqlash_cmd(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/tasdiqlash ZAKAZ_ID KINO_KODI</code>", parse_mode="HTML")
@@ -281,7 +586,11 @@ async def tasdiqlash_cmd(message: Message, command: CommandObject):
             return
         movie = movies[kino_kod]
         await bot.forward_message(chat_id=zakaz["user_id"], from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
-        await bot.send_message(zakaz["user_id"], f"🎉 <b>{movie['nomi']}</b> yuborildi! Rohatingiz kelsin! 🍿", parse_mode="HTML")
+        await bot.send_message(
+            zakaz["user_id"],
+            f"🎉 <b>{movie['nomi']}</b> yuborildi! Rohatingiz kelsin! 🍿",
+            parse_mode="HTML"
+        )
         update_zakaz_status(zakaz_id, "tasdiqlangan")
         await message.answer(f"✅ Zakaz #{zakaz_id} tasdiqlandi!")
     except Exception as e:
@@ -289,7 +598,7 @@ async def tasdiqlash_cmd(message: Message, command: CommandObject):
 
 @dp.message(Command("rad"))
 async def rad_cmd(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/rad ZAKAZ_ID</code>", parse_mode="HTML")
@@ -301,14 +610,18 @@ async def rad_cmd(message: Message, command: CommandObject):
             await message.answer("❌ Zakaz topilmadi!")
             return
         update_zakaz_status(zakaz_id, "rad etilgan")
-        await bot.send_message(zakaz["user_id"], f"❌ <b>Zakazingiz rad etildi.</b>\n🎬 {zakaz['kino_nomi']}", parse_mode="HTML")
+        await bot.send_message(
+            zakaz["user_id"],
+            f"❌ <b>Zakazingiz rad etildi.</b>\n🎬 {zakaz['kino_nomi']}",
+            parse_mode="HTML"
+        )
         await message.answer(f"✅ Zakaz #{zakaz_id} rad etildi.")
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
 
 @dp.message(Command("zakazlar"))
 async def zakazlar_cmd(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     zakazlar = get_all_zakazlar()
     if not zakazlar:
@@ -322,24 +635,61 @@ async def zakazlar_cmd(message: Message):
 
 @dp.message(Command("addmovie"))
 async def add_movie(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
-        await message.answer("❌ Format:\n<code>/addmovie KOD XABAR_ID KINO_NOMI</code>", parse_mode="HTML")
+        await message.answer(
+            "❌ Format:\n<code>/addmovie KOD MSG_ID NOMI</code>\n"
+            "Janr bilan:\n<code>/addmovie KOD MSG_ID NOMI janr:komediya</code>",
+            parse_mode="HTML"
+        )
         return
     try:
         parts = command.args.split(maxsplit=2)
         kod = parts[0]
         msg_id = int(parts[1])
-        nomi = parts[2] if len(parts) > 2 else kod
-        save_movie(kod, {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": []})
-        await message.answer(f"✅ Kino qo'shildi!\n🎬 {nomi}\n🔑 Kod: <code>{kod}</code>", parse_mode="HTML")
+        nomi_janr = parts[2] if len(parts) > 2 else kod
+
+        janr = ""
+        nomi = nomi_janr
+        if "janr:" in nomi_janr:
+            nomi_part, janr_part = nomi_janr.split("janr:", 1)
+            nomi = nomi_part.strip()
+            janr = janr_part.strip()
+
+        save_movie(kod, {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": [], "janr": janr})
+
+        # Barcha foydalanuvchilarga xabar
+        users = get_all_users()
+        janr_text = f"\n🎭 Janr: {janr}" if janr else ""
+        notif = (
+            f"🆕 <b>Yangi kino qo'shildi!</b>\n\n"
+            f"🎬 <b>{nomi}</b>{janr_text}\n"
+            f"🔑 Kod: <code>{kod}</code>\n\n"
+            f"Kodini yuboring va tomosha qiling! 🍿"
+        )
+        for user_id in users:
+            try:
+                await bot.send_message(user_id, notif, parse_mode="HTML")
+                await asyncio.sleep(0.05)
+            except:
+                pass
+
+        await message.answer(
+            f"✅ Kino qo'shildi! {len(users)} ta foydalanuvchiga xabar yuborildi.\n"
+            f"🎬 {nomi}\n🔑 Kod: <code>{kod}</code>"
+            f"{janr_text}",
+            parse_mode="HTML"
+        )
     except Exception as e:
-        await message.answer(f"❌ Xato: {e}\n\nFormat:\n<code>/addmovie KOD XABAR_ID KINO_NOMI</code>", parse_mode="HTML")
+        await message.answer(
+            f"❌ Xato: {e}\n\nFormat:\n<code>/addmovie KOD MSG_ID NOMI</code>",
+            parse_mode="HTML"
+        )
 
 @dp.message(Command("delmovie"))
 async def del_movie(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/delmovie KOD</code>", parse_mode="HTML")
@@ -349,13 +699,13 @@ async def del_movie(message: Message, command: CommandObject):
     if kod in movies:
         nomi = movies[kod]["nomi"]
         delete_movie(kod)
-        await message.answer(f"✅ <b>{nomi}</b> o'chirildi!")
+        await message.answer(f"✅ <b>{nomi}</b> o'chirildi!", parse_mode="HTML")
     else:
         await message.answer("❌ Bunday kod yo'q!")
 
 @dp.message(Command("listmovies"))
 async def list_movies(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     movies = load_movies()
     if not movies:
@@ -363,12 +713,13 @@ async def list_movies(message: Message):
         return
     text = "🎬 <b>Barcha kinolar:</b>\n\n"
     for kod, info in movies.items():
-        text += f"▫️ {info['nomi']} | Kod: <code>{kod}</code> | Ko'rishlar: {info['views']}\n"
+        janr = f" | {info['janr']}" if info.get("janr") else ""
+        text += f"▫️ {info['nomi']}{janr} | Kod: <code>{kod}</code> | Ko'rishlar: {info['views']}\n"
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("addsub"))
 async def add_sub(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/addsub @kanal</code>", parse_mode="HTML")
@@ -382,7 +733,7 @@ async def add_sub(message: Message, command: CommandObject):
 
 @dp.message(Command("delsub"))
 async def del_sub(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/delsub @kanal</code>", parse_mode="HTML")
@@ -396,7 +747,7 @@ async def del_sub(message: Message, command: CommandObject):
 
 @dp.message(Command("subslist"))
 async def subs_list(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not required_channels:
         await message.answer("📭 Majburiy obuna kanallari yo'q!")
@@ -408,17 +759,19 @@ async def subs_list(message: Message):
 
 @dp.message(Command("stats"))
 async def stats(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     movies = load_movies()
     user_count = get_user_count()
     zakazlar = get_all_zakazlar()
+    admins = get_admins()
     top = sorted(movies.items(), key=lambda x: x[1]["views"], reverse=True)[:5]
     top_text = "\n".join([f"{i+1}. {v['nomi']} — {v['views']} marta" for i, (k, v) in enumerate(top)])
     await message.answer(
         f"📊 <b>Statistika</b>\n\n"
         f"👥 Foydalanuvchilar: {user_count}\n"
         f"🎬 Kinolar: {len(movies)}\n"
+        f"👑 Adminlar: {len(admins) + 1}\n"
         f"📢 Majburiy obunalar: {len(required_channels)}\n"
         f"📦 Kutilayotgan zakazlar: {len(zakazlar)}\n\n"
         f"🔥 <b>Top kinolar:</b>\n{top_text or 'Hali yoq'}",
@@ -427,7 +780,7 @@ async def stats(message: Message):
 
 @dp.message(Command("reklama"))
 async def reklama(message: Message, command: CommandObject):
-    if message.from_user.id != ADMIN_ID:
+    if not is_admin(message.from_user.id):
         return
     if not command.args:
         await message.answer("❌ Format: <code>/reklama Xabar matni</code>", parse_mode="HTML")
@@ -438,9 +791,12 @@ async def reklama(message: Message, command: CommandObject):
         try:
             await bot.send_message(user_id, f"📢 <b>Reklama</b>\n\n{command.args}", parse_mode="HTML")
             success += 1
+            await asyncio.sleep(0.05)
         except:
             fail += 1
     await message.answer(f"✅ Yuborildi!\n✔️ Muvaffaqiyatli: {success}\n❌ Xato: {fail}")
+
+# ===== KINO QIDIRISH =====
 
 @dp.message()
 async def find_movie(message: Message):
@@ -466,7 +822,8 @@ async def find_movie(message: Message):
             InlineKeyboardButton(text="⭐5", callback_data=f"rate_{kod}_5"),
         ]])
         await message.answer(
-            f"🎬 <b>{movie['nomi']}</b>\n👁 {movie['views']} marta ko'rildi\n\nBaho bering:",
+            f"🎬 <b>{movie['nomi']}</b>\n"
+            f"👁 {movie['views']} marta ko'rildi\n\nBaho bering:",
             reply_markup=kb, parse_mode="HTML"
         )
     else:
@@ -495,11 +852,17 @@ async def rate_movie(callback: CallbackQuery):
         movie["ratings"].append(ball)
         save_movie(kod, movie)
         avg = sum(movie["ratings"]) / len(movie["ratings"])
-        await callback.message.edit_text(f"✅ Bahoyingiz: {'⭐' * ball}\n📊 O'rtacha reyting: ⭐{avg:.1f}")
+        await callback.message.edit_text(
+            f"✅ Bahoyingiz: {'⭐' * ball}\n"
+            f"📊 O'rtacha reyting: ⭐{avg:.1f}"
+        )
     await callback.answer()
+
+# ===== MAIN =====
 
 async def main():
     await start_web()
+    asyncio.create_task(send_daily_recommendation())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
