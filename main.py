@@ -81,7 +81,9 @@ def load_movies():
                 "msg_id": row["msg_id"],
                 "views": row["views"],
                 "ratings": row.get("ratings") or [],
-                "janr": row.get("janr") or ""
+                "janr": row.get("janr") or "",
+                "vip": row.get("vip") or False,
+                "bought_by": row.get("bought_by") or []
             }
         return movies
 
@@ -96,7 +98,9 @@ def save_movie(kod, data):
                 "msg_id": data["msg_id"],
                 "views": data["views"],
                 "ratings": data["ratings"],
-                "janr": data.get("janr", "")
+                "janr": data.get("janr", ""),
+                "vip": data.get("vip", False),
+                "bought_by": data.get("bought_by", [])
             }
         )
 
@@ -182,7 +186,7 @@ async def subscription_keyboard():
     buttons.append([InlineKeyboardButton(text="✅ Obuna bo'ldim!", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ===== KEYBOARD =====
+# ===== KEYBOARDS =====
 def main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -210,9 +214,11 @@ async def send_daily_recommendation():
         await asyncio.sleep((target - now).total_seconds())
         try:
             movies = load_movies()
-            if not movies:
+            # Faqat bepul kinolardan tavsiya
+            bepul = [(k, v) for k, v in movies.items() if not v.get("vip")]
+            if not bepul:
                 continue
-            kod, movie = random.choice(list(movies.items()))
+            kod, movie = random.choice(bepul)
             users = get_all_users()
             text = (
                 f"🌟 <b>Kunlik tavsiya!</b>\n\n"
@@ -228,6 +234,25 @@ async def send_daily_recommendation():
                     pass
         except Exception as e:
             print(f"Kunlik tavsiya xatosi: {e}")
+
+# ===== KINO YUBORISH FUNKSIYASI =====
+async def send_movie_to_user(chat_id, movie, kod):
+    """Kinoni foydalanuvchiga yuborish — VIP bo'lsa himoyalangan"""
+    if movie.get("vip"):
+        # Pullik kino — himoyalangan (forward/ulashish bloklangan)
+        await bot.forward_message(
+            chat_id=chat_id,
+            from_chat_id=CHANNEL_ID,
+            message_id=movie["msg_id"],
+            protect_content=True
+        )
+    else:
+        # Bepul kino — oddiy forward
+        await bot.forward_message(
+            chat_id=chat_id,
+            from_chat_id=CHANNEL_ID,
+            message_id=movie["msg_id"]
+        )
 
 # ===== HANDLERS =====
 
@@ -278,7 +303,8 @@ async def kinolar_btn(message: Message):
             avg = sum(info["ratings"]) / len(info["ratings"])
             stars = f" ⭐{avg:.1f}"
         janr = f" | {info['janr']}" if info.get("janr") else ""
-        text += f"🎬 <b>{info['nomi']}</b>{stars}{janr}\n🔑 Kod: <code>{kod}</code>\n\n"
+        vip = " 💎" if info.get("vip") else ""
+        text += f"🎬 <b>{info['nomi']}</b>{vip}{stars}{janr}\n🔑 Kod: <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text == "⭐ Top kinolar")
@@ -299,7 +325,8 @@ async def top_kinolar_btn(message: Message):
         if info["ratings"]:
             avg = sum(info["ratings"]) / len(info["ratings"])
             stars = f" ⭐{avg:.1f}"
-        text += f"{i}. <b>{info['nomi']}</b>{stars}\n   👁 {info['views']} marta | 🔑 <code>{kod}</code>\n\n"
+        vip = " 💎" if info.get("vip") else ""
+        text += f"{i}. <b>{info['nomi']}</b>{vip}{stars}\n   👁 {info['views']} marta | 🔑 <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text == "🎭 Janrlar")
@@ -348,7 +375,8 @@ async def janr_callback(callback: CallbackQuery):
         if v["ratings"]:
             avg = sum(v["ratings"]) / len(v["ratings"])
             stars = f" ⭐{avg:.1f}"
-        text += f"🎬 <b>{v['nomi']}</b>{stars}\n🔑 Kod: <code>{k}</code>\n\n"
+        vip = " 💎" if v.get("vip") else ""
+        text += f"🎬 <b>{v['nomi']}</b>{vip}{stars}\n🔑 Kod: <code>{k}</code>\n\n"
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
 
@@ -360,13 +388,15 @@ async def tasodifiy_btn(message: Message):
         await message.answer("⚠️ Avval kanallarga obuna bo'ling:", reply_markup=kb, parse_mode="HTML")
         return
     movies = load_movies()
-    if not movies:
-        await message.answer("📭 Hozircha kinolar yo'q!")
+    # Faqat bepul kinolardan tasodifiy
+    bepul = [(k, v) for k, v in movies.items() if not v.get("vip")]
+    if not bepul:
+        await message.answer("📭 Hozircha bepul kinolar yo'q!")
         return
-    kod, movie = random.choice(list(movies.items()))
+    kod, movie = random.choice(bepul)
     movie["views"] += 1
     save_movie(kod, movie)
-    await bot.forward_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+    await send_movie_to_user(message.chat.id, movie, kod)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⭐1", callback_data=f"rate_{kod}_1"),
         InlineKeyboardButton(text="⭐2", callback_data=f"rate_{kod}_2"),
@@ -399,7 +429,8 @@ async def yangi_kinolar_btn(message: Message):
         if info["ratings"]:
             avg = sum(info["ratings"]) / len(info["ratings"])
             stars = f" ⭐{avg:.1f}"
-        text += f"🎬 <b>{info['nomi']}</b>{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
+        vip = " 💎" if info.get("vip") else ""
+        text += f"🎬 <b>{info['nomi']}</b>{vip}{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(F.text == "👤 Profil")
@@ -429,6 +460,7 @@ async def yordam_btn(message: Message):
         "🆕 Yangi kinolar — oxirgi qo'shilganlar\n"
         "📦 Zakaz — kino buyurtma qilish\n"
         "👤 Profil — shaxsiy ma'lumotlar\n\n"
+        "💎 — pullik kino (zakaz orqali)\n\n"
         f"💬 <b>Muammo bo'lsa?</b>\n"
         f"Admin: {ADMIN_USERNAME}",
         parse_mode="HTML"
@@ -462,7 +494,6 @@ async def zakaz_cancel(message: Message, state: FSMContext):
 async def zakaz_kino_received(message: Message, state: FSMContext):
     username = message.from_user.username or message.from_user.full_name
 
-    # Kino ma'lumotini aniqlash (matn, rasm yoki video)
     if message.text:
         kino_nomi = message.text
         await state.update_data(kino_nomi=kino_nomi, media_type="text", file_id=None)
@@ -492,7 +523,6 @@ async def zakaz_kino_received(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-    # Adminga kino ma'lumotini yuborish
     data = await state.get_data()
     admin_text = (
         f"🆕 <b>Yangi zakaz!</b>\n\n"
@@ -540,16 +570,14 @@ async def zakaz_payment_received(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
 
-# Zakaz holatida boshqa narsa yuborganda
 @dp.message(StateFilter(ZakazState.waiting_for_payment))
 async def zakaz_payment_wrong(message: Message):
     await message.answer(
-        "⚠️ Iltimos, <b>to'lov screenshotini</b> yuboring!\n\n"
+        "⚠️ Iltimos, <b>to'lov screenshotini</b> (rasm) yuboring!\n\n"
         "❌ Bekor qilish uchun tugmani bosing.",
         parse_mode="HTML"
     )
 
-# ===== SCREENSHOT (zakaz tashqarisida) =====
 @dp.message(F.photo, StateFilter(None))
 async def screenshot_handler(message: Message):
     user = message.from_user
@@ -631,7 +659,16 @@ async def tasdiqlash_cmd(message: Message, command: CommandObject):
             await message.answer(f"❌ <code>{kino_kod}</code> kodli kino yo'q!", parse_mode="HTML")
             return
         movie = movies[kino_kod]
-        await bot.forward_message(chat_id=zakaz["user_id"], from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+
+        # VIP kinoni faqat o'sha foydalanuvchiga belgilash
+        if movie.get("vip"):
+            bought = movie.get("bought_by") or []
+            if zakaz["user_id"] not in bought:
+                bought.append(zakaz["user_id"])
+                movie["bought_by"] = bought
+                save_movie(kino_kod, movie)
+
+        await send_movie_to_user(zakaz["user_id"], movie, kino_kod)
         await bot.send_message(
             zakaz["user_id"],
             f"🎉 <b>{movie['nomi']}</b> yuborildi! Rohatingiz kelsin! 🍿",
@@ -685,8 +722,12 @@ async def add_movie(message: Message, command: CommandObject):
         return
     if not command.args:
         await message.answer(
-            "❌ Format:\n<code>/addmovie KOD MSG_ID NOMI</code>\n"
-            "Janr bilan:\n<code>/addmovie KOD MSG_ID NOMI janr:komediya</code>",
+            "❌ Format:\n"
+            "<code>/addmovie KOD MSG_ID NOMI</code>\n"
+            "Janr bilan:\n"
+            "<code>/addmovie KOD MSG_ID NOMI janr:komediya</code>\n"
+            "Pullik kino:\n"
+            "<code>/addmovie KOD MSG_ID NOMI janr:drama vip:ha</code>",
             parse_mode="HTML"
         )
         return
@@ -697,32 +738,49 @@ async def add_movie(message: Message, command: CommandObject):
         nomi_janr = parts[2] if len(parts) > 2 else kod
 
         janr = ""
+        vip = False
         nomi = nomi_janr
+
+        if "vip:ha" in nomi_janr:
+            vip = True
+            nomi_janr = nomi_janr.replace("vip:ha", "").strip()
+
         if "janr:" in nomi_janr:
             nomi_part, janr_part = nomi_janr.split("janr:", 1)
             nomi = nomi_part.strip()
             janr = janr_part.strip()
+        else:
+            nomi = nomi_janr.strip()
 
-        save_movie(kod, {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": [], "janr": janr})
+        save_movie(kod, {"nomi": nomi, "msg_id": msg_id, "views": 0, "ratings": [], "janr": janr, "vip": vip, "bought_by": []})
 
-        users = get_all_users()
+        # Faqat bepul kinolar uchun xabar yuboriladi
+        if not vip:
+            users = get_all_users()
+            janr_text = f"\n🎭 Janr: {janr}" if janr else ""
+            notif = (
+                f"🆕 <b>Yangi kino qo'shildi!</b>\n\n"
+                f"🎬 <b>{nomi}</b>{janr_text}\n"
+                f"🔑 Kod: <code>{kod}</code>\n\n"
+                f"Kodini yuboring va tomosha qiling! 🍿"
+            )
+            for user_id in users:
+                try:
+                    await bot.send_message(user_id, notif, parse_mode="HTML")
+                    await asyncio.sleep(0.05)
+                except:
+                    pass
+            xabar = f"✅ Bepul kino qo'shildi! {len(users)} ta foydalanuvchiga xabar yuborildi."
+        else:
+            xabar = "✅ Pullik (VIP) kino qo'shildi! Foydalanuvchilarga xabar yuborilmadi."
+
         janr_text = f"\n🎭 Janr: {janr}" if janr else ""
-        notif = (
-            f"🆕 <b>Yangi kino qo'shildi!</b>\n\n"
-            f"🎬 <b>{nomi}</b>{janr_text}\n"
-            f"🔑 Kod: <code>{kod}</code>\n\n"
-            f"Kodini yuboring va tomosha qiling! 🍿"
-        )
-        for user_id in users:
-            try:
-                await bot.send_message(user_id, notif, parse_mode="HTML")
-                await asyncio.sleep(0.05)
-            except:
-                pass
-
+        vip_text = "\n💎 Tur: Pullik" if vip else "\n🆓 Tur: Bepul"
         await message.answer(
-            f"✅ Kino qo'shildi! {len(users)} ta foydalanuvchiga xabar yuborildi.\n"
-            f"🎬 {nomi}\n🔑 Kod: <code>{kod}</code>{janr_text}",
+            f"{xabar}\n"
+            f"🎬 {nomi}\n"
+            f"🔑 Kod: <code>{kod}</code>"
+            f"{janr_text}{vip_text}",
             parse_mode="HTML"
         )
     except Exception as e:
@@ -758,7 +816,8 @@ async def list_movies(message: Message):
     text = "🎬 <b>Barcha kinolar:</b>\n\n"
     for kod, info in movies.items():
         janr = f" | {info['janr']}" if info.get("janr") else ""
-        text += f"▫️ {info['nomi']}{janr} | Kod: <code>{kod}</code> | Ko'rishlar: {info['views']}\n"
+        vip = " 💎" if info.get("vip") else ""
+        text += f"▫️ {info['nomi']}{vip}{janr} | Kod: <code>{kod}</code> | Ko'rishlar: {info['views']}\n"
     await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("addsub"))
@@ -809,12 +868,13 @@ async def stats(message: Message):
     user_count = get_user_count()
     zakazlar = get_all_zakazlar()
     admins = get_admins()
+    vip_count = sum(1 for v in movies.values() if v.get("vip"))
     top = sorted(movies.items(), key=lambda x: x[1]["views"], reverse=True)[:5]
     top_text = "\n".join([f"{i+1}. {v['nomi']} — {v['views']} marta" for i, (k, v) in enumerate(top)])
     await message.answer(
         f"📊 <b>Statistika</b>\n\n"
         f"👥 Foydalanuvchilar: {user_count}\n"
-        f"🎬 Kinolar: {len(movies)}\n"
+        f"🎬 Kinolar: {len(movies)} (💎 {vip_count} pullik)\n"
         f"👑 Adminlar: {len(admins) + 1}\n"
         f"📢 Majburiy obunalar: {len(required_channels)}\n"
         f"📦 Kutilayotgan zakazlar: {len(zakazlar)}\n\n"
@@ -868,7 +928,8 @@ async def katalog(message: Message):
         if info["ratings"]:
             avg = sum(info["ratings"]) / len(info["ratings"])
             stars = f" ⭐{avg:.1f}"
-        text += f"🎬 <b>{info['nomi']}</b>{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
+        vip = " 💎" if info.get("vip") else ""
+        text += f"🎬 <b>{info['nomi']}</b>{vip}{stars}\n🔑 Kod: <code>{kod}</code>\n\n"
     await message.answer(text, parse_mode="HTML")
 
 # ===== KINO QIDIRISH =====
@@ -885,9 +946,23 @@ async def find_movie(message: Message):
     movies = load_movies()
     if kod in movies:
         movie = movies[kod]
+
+        # VIP kino tekshiruvi
+        if movie.get("vip"):
+            bought = movie.get("bought_by") or []
+            if message.from_user.id not in bought:
+                await message.answer(
+                    f"💎 <b>{movie['nomi']}</b> — pullik kino!\n\n"
+                    f"Bu kinoni ko'rish uchun zakaz bering:\n"
+                    f"📦 /zakaz — buyurtma berish\n\n"
+                    f"💰 Narx: {ZAKAZ_NARXI:,} so'm",
+                    parse_mode="HTML"
+                )
+                return
+
         movie["views"] += 1
         save_movie(kod, movie)
-        await bot.forward_message(chat_id=message.chat.id, from_chat_id=CHANNEL_ID, message_id=movie["msg_id"])
+        await send_movie_to_user(message.chat.id, movie, kod)
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⭐1", callback_data=f"rate_{kod}_1"),
             InlineKeyboardButton(text="⭐2", callback_data=f"rate_{kod}_2"),
@@ -895,8 +970,9 @@ async def find_movie(message: Message):
             InlineKeyboardButton(text="⭐4", callback_data=f"rate_{kod}_4"),
             InlineKeyboardButton(text="⭐5", callback_data=f"rate_{kod}_5"),
         ]])
+        vip_text = " 💎" if movie.get("vip") else ""
         await message.answer(
-            f"🎬 <b>{movie['nomi']}</b>\n"
+            f"🎬 <b>{movie['nomi']}</b>{vip_text}\n"
             f"👁 {movie['views']} marta ko'rildi\n\nBaho bering:",
             reply_markup=kb, parse_mode="HTML"
         )
@@ -905,7 +981,8 @@ async def find_movie(message: Message):
         if results:
             text = "🔍 <b>Topilgan kinolar:</b>\n\n"
             for k, v in results:
-                text += f"🎬 {v['nomi']}\n🔑 Kod: <code>{k}</code>\n\n"
+                vip = " 💎" if v.get("vip") else ""
+                text += f"🎬 {v['nomi']}{vip}\n🔑 Kod: <code>{k}</code>\n\n"
             await message.answer(text, parse_mode="HTML")
         else:
             await message.answer(
